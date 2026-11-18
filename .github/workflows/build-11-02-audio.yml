@@ -1,7 +1,15 @@
-name: Build MU300 audio for 11.02.1
+name: Build MU300 audio drivers
 
 on:
   workflow_dispatch:
+    inputs:
+      firmware:
+        description: MU300 Linux release
+        type: choice
+        default: v2026.11.02.1
+        options:
+          - v2026.11.02.1
+          - v2026.10.28.1
 
 permissions:
   contents: read
@@ -14,15 +22,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - series: '6.18'
-            kernel: '6.18.60'
-            config_sha: 233c7a622e7e198bf968c610df69a35ac3da7edd908318f958ac2f341791d4b5
-          - series: '7.3'
-            kernel: '7.3.1'
-            config_sha: 66a416f072a289958883234a5a34b37c2386ec57e93a735f0b9b9b6af884e3f3
+        include: >-
+          ${{ fromJSON(inputs.firmware == 'v2026.10.28.1'
+          && '[{"series":"6.18","kernel":"6.18.59","config_sha":"0011dc3826d040bdebcbe27888d91679a130eea5cc2807e20246f1ea7705a7e2","commit":"9572f65547f7388c28a2bd335fefdd0fec8b3108"},{"series":"7.2","kernel":"7.2.13","config_sha":"76ec95964f82ddc126008f398cf073a3899a32bee6cc90be6b6f9768fe88a86a","commit":"9572f65547f7388c28a2bd335fefdd0fec8b3108"}]'
+          || '[{"series":"6.18","kernel":"6.18.60","config_sha":"233c7a622e7e198bf968c610df69a35ac3da7edd908318f958ac2f341791d4b5","commit":"041819a4c75e9244fa42e1e405212f8d61e5fed5"},{"series":"7.3","kernel":"7.3.1","config_sha":"66a416f072a289958883234a5a34b37c2386ec57e93a735f0b9b9b6af884e3f3","commit":"041819a4c75e9244fa42e1e405212f8d61e5fed5"}]') }}
     env:
-      RELEASE: v2026.11.02.1
+      RELEASE: ${{ inputs.firmware }}
       SERIES: ${{ matrix.series }}
       KV: ${{ matrix.kernel }}
       CONFIG_SHA: ${{ matrix.config_sha }}
@@ -32,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dikeckaan/mu300-linux
-          ref: 041819a4c75e9244fa42e1e405212f8d61e5fed5
+          ref: ${{ matrix.commit }}
           path: firmware
           persist-credentials: false
 
