@@ -1,0 +1,82 @@
+name: Build MU300 audio for 11.02.1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Audio modules for Linux ${{ matrix.kernel }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - series: '6.18'
+            kernel: '6.18.60'
+            config_sha: 233c7a622e7e198bf968c610df69a35ac3da7edd908318f958ac2f341791d4b5
+          - series: '7.3'
+            kernel: '7.3.1'
+            config_sha: 66a416f072a289958883234a5a34b37c2386ec57e93a735f0b9b9b6af884e3f3
+    env:
+      RELEASE: v2026.11.02.1
+      SERIES: ${{ matrix.series }}
+      KV: ${{ matrix.kernel }}
+      CONFIG_SHA: ${{ matrix.config_sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the firmware release source
+        uses: actions/checkout@v4
+        with:
+          repository: dikeckaan/mu300-linux
+          ref: 041819a4c75e9244fa42e1e405212f8d61e5fed5
+          path: firmware
+          persist-credentials: false
+
+      - name: Build the release kernel and symbol table
+        run: |
+          docker build -t mu300-mainline-build firmware/upstream
+          docker volume create mu300-kernel
+          docker run --rm -e KV -v mu300-kernel:/src \
+            -v "$PWD/firmware/upstream:/work" mu300-mainline-build bash /work/build.sh
+          docker run --rm -e KV -e CONFIG_SHA -v mu300-kernel:/src mu300-mainline-build bash -euo pipefail -c '
+            build=/src/out-$KV
+            test "$(cat "$build/include/config/kernel.release")" = "$KV"
+            actual=$(grep -E "^(CONFIG_|# CONFIG_)" "$build/.config" | LC_ALL=C sort | sha256sum)
+            if [ "${actual%% *}" != "$CONFIG_SHA" ]; then
+              echo "Kernel configuration differs from the release: ${actual%% *} (expected $CONFIG_SHA)" >&2
+              exit 1
+            fi
+            cd "/src/linux-$KV"
+            make O="$build" ARCH=arm64 -j"$(nproc)" modules > "$build/modules.log" 2>&1 ||
+              { tail -80 "$build/modules.log"; exit 1; }
+            test -s "$build/Module.symvers"
+          '
+
+      - name: Generate the matching audio build kit
+        run: |
+          mkdir -p "$RUNNER_TEMP/kits"
+          docker run --rm -v mu300-kernel:/src -v "$PWD/firmware:/m:ro" \
+            -v "$PWD/kernel/kits:/scripts:ro" -v "$RUNNER_TEMP/kits:/out" \
+            mu300-mainline-build bash /scripts/make-kit-mainline.sh "$KV" "$SERIES" "$RELEASE"
+
+      - name: Build and validate the audio drivers
+        run: |
+          kit_sha=$(sha256sum "$RUNNER_TEMP/kits/kit-$SERIES.tar.xz" | cut -d ' ' -f1)
+          printf '%s %s %s %s %s\n' "$SERIES" "$KV" "$CONFIG_SHA" "$kit_sha" "$RELEASE" > kernel/kits/kits.lock
+          KIT_DIR="$RUNNER_TEMP/kits" sh kernel/build.sh "$SERIES" "out/modules/$KV"
+          (
+            cd "out/modules/$KV"
+            sha256sum KERNEL ./*.ko > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+
+      - name: Upload audio modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: mu300-audio-${{ matrix.kernel }}
+          path: out/modules/${{ matrix.kernel }}/
+          if-no-files-found: error
