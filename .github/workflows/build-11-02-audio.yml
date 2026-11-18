@@ -9,7 +9,7 @@ on:
         default: v2026.11.02.1
         options:
           - v2026.11.02.1
-          - v2026.10.28.1
+          - v2026.11.01.1
 
 permissions:
   contents: read
@@ -23,13 +23,14 @@ jobs:
       fail-fast: false
       matrix:
         include: >-
-          ${{ fromJSON(inputs.firmware == 'v2026.10.28.1'
-          && '[{"series":"6.18","kernel":"6.18.59","config_sha":"0011dc3826d040bdebcbe27888d91679a130eea5cc2807e20246f1ea7705a7e2","commit":"9572f65547f7388c28a2bd335fefdd0fec8b3108"},{"series":"7.2","kernel":"7.2.13","config_sha":"76ec95964f82ddc126008f398cf073a3899a32bee6cc90be6b6f9768fe88a86a","commit":"9572f65547f7388c28a2bd335fefdd0fec8b3108"}]'
+          ${{ fromJSON(inputs.firmware == 'v2026.11.01.1'
+          && '[{"series":"6.18","kernel":"6.18.59","config_sha":"233c7a622e7e198bf968c610df69a35ac3da7edd908318f958ac2f341791d4b5","commit":"f085e2d0d9875ba33228915b248b4a97c5e32610"},{"series":"7.2","kernel":"7.2.13","config_sha":"0a1f3caf232ff23594659ee597fc59b6a440c07ae50063827dce90a79f9cdbe4","commit":"f085e2d0d9875ba33228915b248b4a97c5e32610"},{"series":"7.3","kernel":"7.3.0","config_sha":"66a416f072a289958883234a5a34b37c2386ec57e93a735f0b9b9b6af884e3f3","commit":"f085e2d0d9875ba33228915b248b4a97c5e32610"}]'
           || '[{"series":"6.18","kernel":"6.18.60","config_sha":"233c7a622e7e198bf968c610df69a35ac3da7edd908318f958ac2f341791d4b5","commit":"041819a4c75e9244fa42e1e405212f8d61e5fed5"},{"series":"7.3","kernel":"7.3.1","config_sha":"66a416f072a289958883234a5a34b37c2386ec57e93a735f0b9b9b6af884e3f3","commit":"041819a4c75e9244fa42e1e405212f8d61e5fed5"}]') }}
     env:
       RELEASE: ${{ inputs.firmware }}
       SERIES: ${{ matrix.series }}
-      KV: ${{ matrix.kernel }}
+      KV: ${{ matrix.kernel == '7.3.0' && '7.3' || matrix.kernel }}
+      KREL: ${{ matrix.kernel }}
       CONFIG_SHA: ${{ matrix.config_sha }}
     steps:
       - uses: actions/checkout@v4
@@ -47,9 +48,9 @@ jobs:
           docker volume create mu300-kernel
           docker run --rm -e KV -v mu300-kernel:/src \
             -v "$PWD/firmware/upstream:/work" mu300-mainline-build bash /work/build.sh
-          docker run --rm -e KV -e CONFIG_SHA -v mu300-kernel:/src mu300-mainline-build bash -euo pipefail -c '
+          docker run --rm -e KV -e KREL -e CONFIG_SHA -v mu300-kernel:/src mu300-mainline-build bash -euo pipefail -c '
             build=/src/out-$KV
-            test "$(cat "$build/include/config/kernel.release")" = "$KV"
+            test "$(cat "$build/include/config/kernel.release")" = "$KREL"
             actual=$(grep -E "^(CONFIG_|# CONFIG_)" "$build/.config" | LC_ALL=C sort | sha256sum)
             if [ "${actual%% *}" != "$CONFIG_SHA" ]; then
               echo "Kernel configuration differs from the release: ${actual%% *} (expected $CONFIG_SHA)" >&2
@@ -71,10 +72,10 @@ jobs:
       - name: Build and validate the audio drivers
         run: |
           kit_sha=$(sha256sum "$RUNNER_TEMP/kits/kit-$SERIES.tar.xz" | cut -d ' ' -f1)
-          printf '%s %s %s %s %s\n' "$SERIES" "$KV" "$CONFIG_SHA" "$kit_sha" "$RELEASE" > kernel/kits/kits.lock
-          KIT_DIR="$RUNNER_TEMP/kits" sh kernel/build.sh "$SERIES" "out/modules/$KV"
+          printf '%s %s %s %s %s\n' "$SERIES" "$KREL" "$CONFIG_SHA" "$kit_sha" "$RELEASE" > kernel/kits/kits.lock
+          KIT_DIR="$RUNNER_TEMP/kits" sh kernel/build.sh "$SERIES" "out/modules/$KREL"
           (
-            cd "out/modules/$KV"
+            cd "out/modules/$KREL"
             sha256sum KERNEL ./*.ko > SHA256SUMS
             sha256sum -c SHA256SUMS
           )
